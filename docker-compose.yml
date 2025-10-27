@@ -2,100 +2,54 @@
 
 services:
   # =======================
-  #  Microservices
-  # =======================
-  auth-service:
-    build: ./services/auth-service
-    container_name: auth-service
-    ports:
-      - "3005:3000"
-    env_file:
-      - ./services/auth-service/.env
-    depends_on:
-      - kafka
-    restart: always
-
-  product-service:
-    build: ./services/product-service
-    container_name: product-service
-    ports:
-      - "3002:3000"
-    env_file:
-      - ./services/product-service/.env
-    depends_on:
-      - kafka
-    restart: always
-
-  order-service:
-    build: ./services/order-service
-    container_name: order-service
-    ports:
-      - "3003:3000"
-    env_file:
-      - ./services/order-service/.env
-    depends_on:
-      - kafka
-    restart: always
-
-  notification-service:
-    build: ./services/notification-service
-    container_name: notification-service
-    ports:
-      - "3004:3000"
-    env_file:
-      - ./services/notification-service/.env
-    depends_on:
-      - kafka
-    restart: always
-  # ============ DATABASES ============
-  postgres:
-    image: postgres:16
-    container_name: postgres
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin123
-      POSTGRES_DB: microservice_db
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-  oracle:
-    image: gvenzl/oracle-xe:21-slim
-    container_name: oracle
-    ports:
-      - "1521:1521"
-    environment:
-      ORACLE_PASSWORD: oracle123
-      APP_USER: appuser
-      APP_USER_PASSWORD: app123
-    restart: unless-stopped
-
-  # =======================
-  #  Kafka (KRaft Mode)
+  #  🧠 Kafka (KRaft Mode)
   # =======================
   kafka:
     image: apache/kafka:3.7.0
     container_name: kafka
     ports:
-      - "9092:9092"
+      - "9092:9092"    # Host access (NestJS local)
     environment:
+      # --- Cluster settings ---
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_NODE_ID: 1
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+
+      # --- Storage & logs ---
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+
+      # --- Listeners ---
+      # 2 listeners: one for container network, one for host (localhost)
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+
+      # --- Basic behavior ---
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+      # --- Ensure group coordinator and internal topics work (single broker) ---
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
     volumes:
       - kafka_data:/var/lib/kafka/data
+    networks:
+      - microservice-net
     restart: unless-stopped
 
+    # --- Healthcheck to ensure Kafka is ready before services connect ---
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
   # =======================
-  #  Kafka UI
+  # Kafka UI (Dashboard)
   # =======================
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -104,11 +58,62 @@ services:
       - "9000:8080"
     environment:
       - KAFKA_CLUSTERS_0_NAME=local
-      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:29092
+      - KAFKA_CLUSTERS_0_ZOOKEEPER=disabled
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     restart: unless-stopped
+    networks:
+      - microservice-net
 
+  # =======================
+  #  (Optional) Example NestJS Microservices
+  # =======================
+  # user-service:
+  #   build: ./user-service
+  #   container_name: user-service
+  #   ports:
+  #     - "4001:3000"
+  #   env_file:
+  #     - ./user-service/.env
+  #   depends_on:
+  #     kafka:
+  #       condition: service_healthy
+  #   networks:
+  #     - microservice-net
+  #   restart: always
+
+  # task-service:
+  #   build: ./task-service
+  #   container_name: task-service
+  #   ports:
+  #     - "4002:3000"
+  #   env_file:
+  #     - ./task-service/.env
+  #   depends_on:
+  #     kafka:
+  #       condition: service_healthy
+  #   networks:
+  #     - microservice-net
+  #   restart: always
+
+  # api-gateway:
+  #   build: ./api-gateway
+  #   container_name: api-gateway
+  #   ports:
+  #     - "4000:3000"
+  #   env_file:
+  #     - ./api-gateway/.env
+  #   depends_on:
+  #     - user-service
+  #     - task-service
+  #   restart: always
+  #   networks:
+  #     - microservice-net
 volumes:
   kafka_data:
-  postgres_data:
+
+networks:
+  microservice-net:
+    driver: bridge

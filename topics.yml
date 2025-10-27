@@ -1,0 +1,6 @@
+- name: user_created
+  partitions: 3
+  replicationFactor: 2
+- name: order_approved
+  partitions: 5
+  replicationFactor: 3
